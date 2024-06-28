@@ -61,18 +61,6 @@ function Log-Message {
     Write-Output $message
 }
 
-# Prompt for user confirmation
-function Confirm-Action {
-    param (
-        [string]$message
-    )
-    $response = Read-Host "$message (y/n)"
-    if ($response -ne 'y') {
-        Log-Message "User cancelled the action: $message"
-        Exit
-    }
-}
-
 # Main script
 Ensure-Admin
 Ensure-ExecutionPolicy
@@ -83,11 +71,6 @@ $office365Path = Join-Path -Path $tempDir -ChildPath "365.exe"
 $ninitePath = Join-Path -Path $tempDir -ChildPath "Ninite.exe"
 $rarregPath = Join-Path -Path $tempDir -ChildPath "rarreg.key"
 $logFile = Join-Path -Path $tempDir -ChildPath "script_log.txt"
-
-# Confirm actions
-Confirm-Action "Proceed with downloading and installing Office 365?"
-Confirm-Action "Proceed with downloading and running Ninite?"
-Confirm-Action "Proceed with replacing rarreg.key in WinRAR directory?"
 
 # Download files
 Download-File -url "https://github.com/BlueStreak79/Setup/raw/main/365.exe" -output $office365Path
