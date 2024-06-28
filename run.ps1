@@ -78,15 +78,10 @@ Ensure-Admin
 Ensure-ExecutionPolicy
 
 # Define download URLs and paths
-$configFile = Join-Path -Path $tempDir -ChildPath "config.json"
-$config = Get-Content -Path $configFile | ConvertFrom-Json
-
 $tempDir = [System.IO.Path]::GetTempPath()
 $office365Path = Join-Path -Path $tempDir -ChildPath "365.exe"
 $ninitePath = Join-Path -Path $tempDir -ChildPath "Ninite.exe"
 $rarregPath = Join-Path -Path $tempDir -ChildPath "rarreg.key"
-
-# Define the log file path
 $logFile = Join-Path -Path $tempDir -ChildPath "script_log.txt"
 
 # Confirm actions
@@ -95,23 +90,42 @@ Confirm-Action "Proceed with downloading and running Ninite?"
 Confirm-Action "Proceed with replacing rarreg.key in WinRAR directory?"
 
 # Download files
-Download-File -url $config.Office365Url -output $office365Path
-Download-File -url $config.NiniteUrl -output $ninitePath
-Download-File -url $config.RarregUrl -output $rarregPath
+Download-File -url "https://github.com/BlueStreak79/Setup/raw/main/365.exe" -output $office365Path
+Download-File -url "https://github.com/BlueStreak79/Setup/raw/main/Ninite.exe" -output $ninitePath
+Download-File -url "https://github.com/BlueStreak79/Setup/raw/main/rarreg.key" -output $rarregPath
 
-# Run installers
+# Run installers and commands in parallel
+$jobs = @()
+
 Log-Message "Running Office 365 installer..."
-Start-Process -FilePath $office365Path -Wait
+$jobs += Start-Job -ScriptBlock {
+    Start-Process -FilePath $using:office365Path -Wait
+}
 
 Log-Message "Running Ninite installer..."
-Start-Process -FilePath $ninitePath -Wait
+$jobs += Start-Job -ScriptBlock {
+    Start-Process -FilePath $using:ninitePath -Wait
+}
+
+Log-Message "Executing debloat script..."
+$jobs += Start-Job -ScriptBlock {
+    Invoke-Expression -Command "irm git.io/debloat | iex"
+}
+
+Log-Message "Executing Windows activation command..."
+$jobs += Start-Job -ScriptBlock {
+    Invoke-Expression -Command "irm get.activated.win | iex"
+}
+
+# Wait for all jobs to complete
+foreach ($job in $jobs) {
+    Wait-Job -Job $job
+    Remove-Job -Job $job
+}
 
 # Replace rarreg.key file in WinRAR installation directory
-$rarregDest = Join-Path -Path $config.WinrarDir -ChildPath "rarreg.key"
+$winrarDir = "C:\Program Files\WinRAR"
+$rarregDest = Join-Path -Path $winrarDir -ChildPath "rarreg.key"
 Replace-File -source $rarregPath -destination $rarregDest
-
-# Execute final command
-Log-Message "Executing command to activate Windows..."
-Invoke-Expression -Command "irm get.activated.win | iex"
 
 Log-Message "Script completed successfully."
