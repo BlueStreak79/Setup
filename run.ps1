@@ -15,29 +15,14 @@ function Ensure-ExecutionPolicy {
     }
 }
 
-# Download a file from a given URL with error handling and retries
+# Download a file from a given URL
 function Download-File {
     param (
         [string]$url,
-        [string]$output,
-        [int]$retries = 3
+        [string]$output
     )
-    $attempt = 0
-    while ($attempt -lt $retries) {
-        try {
-            Write-Host "Attempting to download $url to $output (Attempt $($attempt + 1))"
-            Invoke-WebRequest -Uri $url -OutFile $output -ErrorAction Stop
-            Write-Host "Download successful: $url"
-            return
-        } catch {
-            Write-Host "Error downloading $url: $_"
-            $attempt++
-            if ($attempt -eq $retries) {
-                throw "Failed to download $url after $retries attempts."
-            }
-            Start-Sleep -Seconds 5
-        }
-    }
+    Write-Host "Attempting to download $url to $output"
+    Invoke-WebRequest -Uri $url -OutFile $output
 }
 
 # Replace a file in a specified directory
