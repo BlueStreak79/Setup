@@ -1,7 +1,6 @@
 # Ensure the script is running with administrative privileges
 function Ensure-Admin {
     if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
-        Write-Host "Restarting script with administrative privileges..."
         Start-Process powershell.exe "-File $PSCommandPath" -Verb RunAs
         Exit
     }
@@ -21,7 +20,6 @@ function Download-File {
         [string]$url,
         [string]$output
     )
-    Write-Host "Attempting to download $url to $output"
     Invoke-WebRequest -Uri $url -OutFile $output
 }
 
@@ -31,7 +29,6 @@ function Replace-File {
         [string]$source,
         [string]$destination
     )
-    Write-Host "Replacing file in $destination with $source"
     Copy-Item -Path $source -Destination $destination -Force
 }
 
@@ -51,21 +48,12 @@ Download-File -url "https://github.com/BlueStreak79/Setup/raw/main/Ninite.exe" -
 Download-File -url "https://github.com/BlueStreak79/Setup/raw/main/rarreg.key" -output $rarregPath
 
 # Run installers and commands in sequence
-Write-Host "Running Office 365 installer..."
 Start-Process -FilePath $office365Path -Wait
-
-Write-Host "Running Ninite installer..."
 Start-Process -FilePath $ninitePath -Wait
-
-Write-Host "Executing debloat script..."
 Invoke-Expression -Command "irm git.io/debloat | iex"
-
-Write-Host "Executing Windows activation command..."
 Invoke-Expression -Command "irm get.activated.win | iex"
 
 # Replace rarreg.key file in WinRAR installation directory
 $winrarDir = "C:\Program Files\WinRAR"
 $rarregDest = Join-Path -Path $winrarDir -ChildPath "rarreg.key"
 Replace-File -source $rarregPath -destination $rarregDest
-
-Write-Host "Script completed successfully."
