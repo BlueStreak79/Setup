@@ -38,14 +38,18 @@ Ensure-ExecutionPolicy
 
 # Define download URLs and paths
 $tempDir = [System.IO.Path]::GetTempPath()
+$niniteUrl = "https://github.com/BlueStreak79/Setup/raw/main/Ninite.exe"
+$office365Url = "https://github.com/BlueStreak79/Setup/raw/main/365.exe"
+$rarregUrl = "https://github.com/BlueStreak79/Setup/raw/main/rarreg.key"
+
 $ninitePath = Join-Path -Path $tempDir -ChildPath "Ninite.exe"
 $office365Path = Join-Path -Path $tempDir -ChildPath "365.exe"
 $rarregPath = Join-Path -Path $tempDir -ChildPath "rarreg.key"
 
 # Download files
-Download-File -url "https://github.com/BlueStreak79/Setup/raw/main/Ninite.exe" -output $ninitePath
-Download-File -url "https://github.com/BlueStreak79/Setup/raw/main/365.exe" -output $office365Path
-Download-File -url "https://github.com/BlueStreak79/Setup/raw/main/rarreg.key" -output $rarregPath
+Download-File -url $niniteUrl -output $ninitePath
+Download-File -url $office365Url -output $office365Path
+Download-File -url $rarregUrl -output $rarregPath
 
 # Start Ninite installer
 Start-Process -FilePath $ninitePath
