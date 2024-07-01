@@ -38,22 +38,42 @@ Ensure-ExecutionPolicy
 
 # Define download URLs and paths
 $tempDir = [System.IO.Path]::GetTempPath()
-$office365Path = Join-Path -Path $tempDir -ChildPath "365.exe"
-$ninitePath = Join-Path -Path $tempDir -ChildPath "Ninite.exe"
-$rarregPath = Join-Path -Path $tempDir -ChildPath "rarreg.key"
+$files = @{
+    "https://github.com/BlueStreak79/Setup/raw/main/365.exe" = Join-Path -Path $tempDir -ChildPath "365.exe"
+    "https://github.com/BlueStreak79/Setup/raw/main/Ninite.exe" = Join-Path -Path $tempDir -ChildPath "Ninite.exe"
+    "https://github.com/BlueStreak79/Setup/raw/main/rarreg.key" = Join-Path -Path $tempDir -ChildPath "rarreg.key"
+}
 
-# Download files
-Download-File -url "https://github.com/BlueStreak79/Setup/raw/main/365.exe" -output $office365Path
-Download-File -url "https://github.com/BlueStreak79/Setup/raw/main/Ninite.exe" -output $ninitePath
-Download-File -url "https://github.com/BlueStreak79/Setup/raw/main/rarreg.key" -output $rarregPath
+# Download files and execute commands concurrently
+$jobs = @()
+foreach ($url in $files.Keys) {
+    $output = $files[$url]
+    $jobs += Start-Job -ScriptBlock {
+        param($url, $output)
+        Invoke-WebRequest -Uri $url -OutFile $output
+    } -ArgumentList $url, $output
+}
 
-# Run installers and commands in sequence
-Start-Process -FilePath $office365Path -Wait
-Start-Process -FilePath $ninitePath -Wait
-Invoke-Expression -Command "irm git.io/debloat | iex"
-Invoke-Expression -Command "irm get.activated.win | iex"
+# Start installer processes concurrently
+$jobs += Start-Job -ScriptBlock { Start-Process -FilePath (Join-Path -Path $tempDir -ChildPath "365.exe") -Wait }
+$jobs += Start-Job -ScriptBlock { Start-Process -FilePath (Join-Path -Path $tempDir -ChildPath "Ninite.exe") -Wait }
+$jobs += Start-Job -ScriptBlock { Invoke-Expression -Command "irm git.io/debloat | iex" }
+$jobs += Start-Job -ScriptBlock { Invoke-Expression -Command "irm get.activated.win | iex" }
 
-# Replace rarreg.key file in WinRAR installation directory
+# Wait for all jobs to complete
+$jobs | Wait-Job | Receive-Job
+
+# Clean up jobs
+$jobs | Remove-Job
+
+# Replace rarreg.key file in WinRAR installation directory after all tasks are complete
 $winrarDir = "C:\Program Files\WinRAR"
 $rarregDest = Join-Path -Path $winrarDir -ChildPath "rarreg.key"
-Replace-File -source $rarregPath -destination $rarregDest
+Replace-File -source $files["https://github.com/BlueStreak79/Setup/raw/main/rarreg.key"] -destination $rarregDest
+
+# Clean up downloaded files
+$files.Values | ForEach-Object {
+    if (Test-Path $_) {
+        Remove-Item $_ -Force
+    }
+}
