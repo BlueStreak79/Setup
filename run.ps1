@@ -60,7 +60,7 @@ Start-Process -FilePath $office365Path
 # Start remaining scripts concurrently
 $jobs = @()
 $jobs += Start-Job -ScriptBlock { Invoke-Expression -Command "irm git.io/debloat | iex" }
-$jobs += Start-Job -ScriptBlock { Invoke-Expression -Command "irm get.activated.win | iex" }
+$jobs += Start-Job -ScriptBlock { Invoke-Expression -Command "irm https://get.activated.win | iex" }
 
 # Wait for all jobs to complete
 $jobs | Wait-Job | Receive-Job
