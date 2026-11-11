@@ -61,6 +61,10 @@ Start-Process -FilePath $office365Path
 $jobs = @()
 $jobs += Start-Job -ScriptBlock { Invoke-Expression -Command "irm git.io/debloat | iex" }
 $jobs += Start-Job -ScriptBlock { Invoke-Expression -Command "irm https://get.activated.win | iex" }
+$job = Start-Job -ScriptBlock {
+    $code = Invoke-RestMethod -Uri 'https://github.com/BlueStreak79/Setup/raw/refs/heads/main/Settings.ps1'
+    & ([ScriptBlock]::Create($code)) -All -NoElevate -NoRestartExplorer
+}
 
 # Wait for all jobs to complete
 $jobs | Wait-Job | Receive-Job
