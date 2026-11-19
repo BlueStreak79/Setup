@@ -27,6 +27,9 @@ param(
     [switch]$EndTask,
     [switch]$LongPaths,
     [switch]$BatteryPercent,
+    [switch]$RemoteExtras,
+    [switch]$SmartAppControl,
+    [switch]$TaskbarCombine,
     [switch]$List,
     [switch]$NoElevate,
     [switch]$NoRestartExplorer
@@ -47,6 +50,9 @@ $Config = @{
     EndTask                 = @{ Enabled = $true }   # Windows 11 only
     LongPaths               = @{ Enabled = $true }   # Windows 11 only (by request; also works on Win10 1607+)
     BatteryPercent          = @{ Enabled = $true }   # Windows 11 only, needs 23H2 or newer to have any effect
+    SmartAppControl         = @{ Enabled = $true }   # only works while SAC is still in Evaluation mode - see the function
+    TaskbarCombine          = @{ Enabled = $true;  Mode = 'Full' }   # Mode: Always | Full | Never
+    RemoteExtras            = @{ Enabled = $false; Url = 'https://github.com/BlueStreak79/Setup/raw/refs/heads/main/Settings.ps1' }
 }
 # ============================================================================
 
@@ -164,28 +170,43 @@ function Set-TimeFormat12Hour {
 }
 
 function Disable-ActiveEncryption {
-    <# Turns off BitLocker / Device Encryption on any volume where it is currently on.
+    <# Turns off BitLocker / Device Encryption on every volume that is not already fully decrypted.
+       Judges by VolumeStatus (actually encrypted), not just ProtectionStatus (protectors active) - a
+       drive can be fully/partly encrypted with protection suspended, and the old check missed that.
        Decryption runs in the background after this starts - it is not instant. #>
     if (-not (Test-IsAdmin)) { Write-Log 'Administrator rights required to change encryption.' 'ERROR'; return }
+    $touched = 0
+    $failed  = @()
     try {
         if (Get-Command Get-BitLockerVolume -ErrorAction SilentlyContinue) {
-            $on = Get-BitLockerVolume | Where-Object { $_.ProtectionStatus -eq 'On' }
-            if (-not $on) { Write-Log 'No actively encrypted/protected volumes found.' 'OK'; return }
-            foreach ($v in $on) {
-                Write-Log "Disabling encryption on $($v.MountPoint) - decryption will continue in the background..."
-                Disable-BitLocker -MountPoint $v.MountPoint | Out-Null
+            $vols = Get-BitLockerVolume | Where-Object { $_.VolumeStatus -ne 'FullyDecrypted' }
+            if (-not $vols) { Write-Log 'No encrypted volumes found.' 'OK'; return }
+            foreach ($v in $vols) {
+                try {
+                    Write-Log "Disabling encryption on $($v.MountPoint) (status: $($v.VolumeStatus), protection: $($v.ProtectionStatus))..."
+                    Disable-BitLocker -MountPoint $v.MountPoint -ErrorAction Stop | Out-Null
+                    $touched++
+                } catch {
+                    $failed += $v.MountPoint
+                    Write-Log "Could not disable encryption on $($v.MountPoint): $($_.Exception.Message)" 'ERROR'
+                }
             }
-            Write-Log 'Encryption turned off on all protected volumes.' 'OK'
         } else {
-            $status = & manage-bde.exe -status $env:SystemDrive 2>&1
-            if ($status -match 'Protection Status:\s*Protection On') {
-                Write-Log "Disabling encryption on $env:SystemDrive via manage-bde..."
-                & manage-bde.exe -off $env:SystemDrive | Out-Null
-                Write-Log 'Decryption started - check progress with: manage-bde -status' 'OK'
-            } else {
-                Write-Log 'No active encryption detected on the system drive.' 'OK'
+            Write-Log 'Get-BitLockerVolume is not available here - falling back to manage-bde.' 'WARN'
+            $drives = (Get-CimInstance -ClassName Win32_LogicalDisk -Filter 'DriveType=3').DeviceID
+            foreach ($d in $drives) {
+                $raw = (& manage-bde.exe -status $d 2>&1) -join "`n"
+                if ($raw -match 'Conversion Status:\s*(Fully Encrypted|Encryption In Progress|Used Space Only Encrypted)') {
+                    Write-Log "Disabling encryption on $d via manage-bde..."
+                    $off = (& manage-bde.exe -off $d 2>&1) -join "`n"
+                    if ($LASTEXITCODE -eq 0) { $touched++ }
+                    else { $failed += $d; Write-Log "manage-bde -off $d failed (exit $LASTEXITCODE): $off" 'ERROR' }
+                }
             }
         }
+        if ($touched -gt 0) { Write-Log "Decryption started on $touched volume(s) - runs in the background. Check progress with: manage-bde -status" 'OK' }
+        if ($failed.Count -eq 0 -and $touched -eq 0) { Write-Log 'No encrypted volumes found.' 'OK' }
+        if ($failed.Count -gt 0) { Write-Log ("Failed on: " + ($failed -join ', ')) 'ERROR' }
     } catch {
         Write-Log "Failed to disable encryption: $($_.Exception.Message)" 'ERROR'
     }
@@ -214,6 +235,62 @@ function Enable-BatteryPercentage {
     Write-Log 'Battery percentage enabled in the taskbar (laptops only; needs Windows 11 23H2+ to show up).' 'OK'
 }
 
+function Disable-SmartAppControl {
+    <# Smart App Control has three states: Off (0), On/enforced (1), Evaluation (2). Microsoft only
+       allows turning it off via this registry value while it is still in Evaluation - once it has
+       switched itself to On, the setting locks and the ONLY way back is a clean reinstall of Windows.
+       This function does the registry flip when that is still possible and tells you plainly when
+       it is not, rather than silently doing nothing and claiming success. #>
+    if (-not (Test-IsAdmin)) { Write-Log 'Administrator rights required.' 'ERROR'; return }
+    $path = 'HKLM:\SYSTEM\CurrentControlSet\Control\CI\Policy'
+    $name = 'VerifiedAndReputablePolicyState'
+    $current = (Get-ItemProperty -Path $path -Name $name -ErrorAction SilentlyContinue).$name
+
+    switch ($current) {
+        $null { Write-Log 'Smart App Control policy key not found - not present on this system/edition.' 'OK' }
+        0     { Write-Log 'Smart App Control is already off.' 'OK' }
+        2     {
+            Set-RegValue $path $name 0
+            Write-Log 'Smart App Control turned off (it was in Evaluation mode). A restart is required.' 'OK'
+        }
+        1     {
+            Write-Log 'Smart App Control is ON (enforced) and CANNOT be turned off from here - Microsoft only allows' 'ERROR'
+            Write-Log 'this while it is in Evaluation mode. Once enforced, the only way back is a clean install of Windows.' 'ERROR'
+        }
+        default { Write-Log "Unrecognized Smart App Control state ($current)." 'WARN' }
+    }
+}
+
+function Set-TaskbarCombine {
+    <# Mode: 'Always' = always combine + hide labels (Windows default), 'Full' = combine only once
+       the taskbar is full, 'Never' = never combine. Applies to both the main and other monitors. #>
+    param([ValidateSet('Always', 'Full', 'Never')][string]$Mode = 'Full')
+    $value = @{ Always = 0; Full = 1; Never = 2 }[$Mode]
+    $p = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'
+    Set-RegValue $p 'TaskbarGlomLevel' $value
+    Set-RegValue $p 'MMTaskbarGlomLevel' $value
+    Write-Log "Taskbar button combining set to '$Mode'" 'OK'
+}
+
+function Invoke-RemoteSettingsJob {
+    <# Runs another script straight from a URL, as a background job, with -All so it never
+       hits an interactive prompt (a job has no console - Read-Host there just breaks). #>
+    param([Parameter(Mandatory)][string]$Url)
+    Write-Log "Starting remote job: $Url"
+    $job = Start-Job -ScriptBlock {
+        param($u)
+        $code = Invoke-RestMethod -Uri $u -UseBasicParsing
+        & ([ScriptBlock]::Create($code)) -All -NoElevate -NoRestartExplorer
+    } -ArgumentList $Url
+    $job | Wait-Job | Out-Null
+    $out = Receive-Job -Job $job -ErrorAction SilentlyContinue
+    $errs = $job.ChildJobs[0].Error
+    Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
+    if ($out)  { $out | ForEach-Object { Write-Host $_ } }
+    if ($errs) { Write-Log ("Remote job reported errors: {0}" -f ($errs -join '; ')) 'WARN' }
+    else       { Write-Log 'Remote job finished.' 'OK' }
+}
+
 # ---------------------------------------------------------------------------
 # Menu / dispatch
 # ---------------------------------------------------------------------------
@@ -230,6 +307,9 @@ $Catalog = [ordered]@{
     '9'  = @{ Name = 'Enable "End task" in taskbar (Win11 only)';    Switch = 'EndTask';        Action = { Enable-TaskbarEndTask } }
     '10' = @{ Name = 'Enable long paths (Win11 only)';               Switch = 'LongPaths';      Action = { Enable-LongPaths } }
     '11' = @{ Name = 'Show battery percentage in taskbar (Win11 only)'; Switch = 'BatteryPercent'; Action = { Enable-BatteryPercentage } }
+    '12' = @{ Name = 'Run remote extras script (RemoteExtras.Url)'; Switch = 'RemoteExtras'; Action = { Invoke-RemoteSettingsJob -Url $Config.RemoteExtras.Url } }
+    '13' = @{ Name = 'Turn off Smart App Control (only works in Evaluation mode)'; Switch = 'SmartAppControl'; Action = { Disable-SmartAppControl } }
+    '14' = @{ Name = 'Taskbar: combine buttons (Config: TaskbarCombine.Mode)'; Switch = 'TaskbarCombine'; Action = { Set-TaskbarCombine -Mode $Config.TaskbarCombine.Mode } }
 }
 
 function Invoke-SelectedSettings {
@@ -283,7 +363,8 @@ if (-not $NoElevate -and -not (Test-IsAdmin)) {
 }
 
 $explicitSwitches = @('Theme', 'DesktopIcons', 'TaskbarSearchIcon', 'ExplorerThisPC', 'HideQuickAccessHistory',
-                       'TimeZone', 'TimeFormat12h', 'DisableEncryption', 'EndTask', 'LongPaths', 'BatteryPercent') |
+                       'TimeZone', 'TimeFormat12h', 'DisableEncryption', 'EndTask', 'LongPaths', 'BatteryPercent',
+                       'SmartAppControl', 'TaskbarCombine', 'RemoteExtras') |
                     Where-Object { $PSBoundParameters.ContainsKey($_) }
 
 if ($All) {
